@@ -73,7 +73,7 @@ func TestClient_GetOrder(t *testing.T) {
 			srv := httptest.NewServer(handler)
 			defer srv.Close()
 
-			client := New(srv.Listener.Addr().String())
+			client := New("http://" + srv.Listener.Addr().String())
 			res, status, retry, err := client.GetOrder("12345678903")
 
 			if status != tt.wantStatus {

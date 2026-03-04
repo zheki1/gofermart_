@@ -45,7 +45,7 @@ func New(baseURL string) *Client {
 // - время, которое нужно ждать до повторного запроса (если 429 Too Many Requests)
 // - ошибку (если запрос или декодирование JSON завершились неудачно)
 func (c *Client) GetOrder(number string) (*Response, int, time.Duration, error) {
-	url := fmt.Sprintf("http://%s/api/orders/%s", c.baseURL, number)
+	url := fmt.Sprintf("%s/api/orders/%s", c.baseURL, number)
 
 	resp, err := c.client.Get(url)
 	if err != nil {
