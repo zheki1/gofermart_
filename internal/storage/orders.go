@@ -95,7 +95,7 @@ func (p *Postgres) ClaimOrders(ctx context.Context, limit int) ([]models.Order, 
 		WHERE number IN (
 			SELECT number
 			FROM orders
-			WHERE status='NEW' OR (status='PROCESSING' AND updated_at < now() - interval '15 second')
+			WHERE status='NEW' OR (status='PROCESSING' AND updated_at < now() - interval '2 second')
 			ORDER BY updated_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT $1
