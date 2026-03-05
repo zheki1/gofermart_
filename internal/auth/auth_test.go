@@ -7,6 +7,8 @@ import (
 func TestGenerateAndParseToken(t *testing.T) {
 	userID := 42
 
+	Init("test-secret")
+
 	token, err := GenerateToken(userID)
 	if err != nil {
 		t.Fatalf("GenerateToken failed: %v", err)
@@ -23,6 +25,7 @@ func TestGenerateAndParseToken(t *testing.T) {
 }
 
 func TestParseToken_InvalidToken(t *testing.T) {
+	Init("test-secret")
 	_, err := ParseToken("invalid.token.string")
 	if err == nil {
 		t.Fatal("expected error for invalid token, got nil")

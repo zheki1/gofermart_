@@ -9,6 +9,7 @@ import (
 )
 
 func TestAuthMiddleware_Success(t *testing.T) {
+	auth.Init("test-secret")
 	token, _ := auth.GenerateToken(99)
 
 	handler := Auth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

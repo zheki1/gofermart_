@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gofermart_/internal/accrual"
+	"gofermart_/internal/auth"
 	"gofermart_/internal/config"
 	httptransport "gofermart_/internal/http"
 	"gofermart_/internal/logger"
@@ -39,6 +40,7 @@ func New() (*App, error) {
 	logger.Log.Info("Logger initialized")
 
 	cfg := config.MustLoadWithFlags(nil)
+	auth.Init(cfg.JWTSecret)
 
 	db, err := storage.NewPostgres(cfg.DatabaseURI)
 	if err != nil {

@@ -41,6 +41,7 @@ func (m *mockRepo) GetWithdrawals(ctx context.Context, userID int) ([]models.Wit
 
 // Тест публичных маршрутов
 func TestRouter_PublicRoutes(t *testing.T) {
+	auth.Init("test-secret")
 	logger.Init("/dev/null", logger.DEBUG)
 	r := NewRouter(&mockRepo{})
 
@@ -65,6 +66,7 @@ func TestRouter_PublicRoutes(t *testing.T) {
 }
 
 func TestRouter_ProtectedRoutes_Authorized(t *testing.T) {
+	auth.Init("test-secret")
 	logger.Init("/dev/null", logger.DEBUG)
 	r := NewRouter(&mockRepo{})
 

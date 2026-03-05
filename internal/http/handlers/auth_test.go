@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"gofermart_/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,7 @@ import (
 )
 
 func TestAuthHandler_Register(t *testing.T) {
+	auth.Init("test-secret")
 	h := &AuthHandler{Repo: &mockRepo{}}
 
 	req := httptest.NewRequest("POST", "/api/user/register",
@@ -28,6 +30,7 @@ func TestAuthHandler_Register(t *testing.T) {
 }
 
 func TestAuthHandler_Login(t *testing.T) {
+	auth.Init("test-secret")
 	h := &AuthHandler{Repo: &mockRepo{}}
 
 	req := httptest.NewRequest("POST", "/api/user/login",

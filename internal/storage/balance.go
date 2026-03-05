@@ -58,7 +58,7 @@ func (p *Postgres) GetBalance(ctx context.Context, userID int) (*models.Balance,
 	`, userID).Scan(&current, &withdrawn)
 
 	if errors.Is(err, pgx.ErrNoRows) {
-		return &models.Balance{}, nil
+		return nil, nil
 	}
 
 	if err != nil {

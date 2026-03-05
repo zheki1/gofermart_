@@ -23,12 +23,13 @@ func restoreEnv(old map[string]string) {
 // Тест значений по умолчанию
 func TestMustLoad_Defaults(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	old := backupEnv("RUN_ADDRESS", "DATABASE_URI", "ACCRUAL_SYSTEM_ADDRESS")
+	old := backupEnv("RUN_ADDRESS", "DATABASE_URI", "ACCRUAL_SYSTEM_ADDRESS", "JWT_SECRET")
 	defer restoreEnv(old)
 
 	os.Unsetenv("RUN_ADDRESS")
 	os.Unsetenv("DATABASE_URI")
 	os.Unsetenv("ACCRUAL_SYSTEM_ADDRESS")
+	os.Unsetenv("JWT_SECRET")
 
 	cfg := MustLoadWithFlags(fs)
 
@@ -40,6 +41,9 @@ func TestMustLoad_Defaults(t *testing.T) {
 	}
 	if cfg.AccrualSystemAddress != "localhost:9999" {
 		t.Errorf("expected default AccrualSystemAddress, got %s", cfg.AccrualSystemAddress)
+	}
+	if cfg.JWTSecret != "super-secret-key" {
+		t.Errorf("expected default JWTSecret got %s", cfg.JWTSecret)
 	}
 }
 

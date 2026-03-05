@@ -10,6 +10,7 @@ type Config struct {
 	RunAddress           string // адрес, на котором запускается сервер
 	DatabaseURI          string // URI базы данных
 	AccrualSystemAddress string // адрес внешней системы начислений
+	JWTSecret            string // ключ подписи JWT
 }
 
 // MustLoad загружает конфигурацию приложения (основная для production).
@@ -29,6 +30,7 @@ func MustLoadWithFlags(fs *flag.FlagSet) *Config {
 	fs.StringVar(&cfg.RunAddress, "a", getEnv("RUN_ADDRESS", "localhost:8888"), "run address")
 	fs.StringVar(&cfg.DatabaseURI, "d", getEnv("DATABASE_URI", "postgres://postgres:postgres@localhost:5432/gofermart?sslmode=disable"), "database uri")
 	fs.StringVar(&cfg.AccrualSystemAddress, "r", getEnv("ACCRUAL_SYSTEM_ADDRESS", "localhost:9999"), "accrual address")
+	fs.StringVar(&cfg.JWTSecret, "s", getEnv("JWT_SECRET", "super-secret-key"), "jwt secret")
 
 	// для тестового FlagSet передаем пустой слайс аргументов
 	if fs == flag.CommandLine {
