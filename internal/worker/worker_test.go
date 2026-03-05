@@ -8,11 +8,16 @@ import (
 	"gofermart_/internal/accrual"
 	"gofermart_/internal/logger"
 	"gofermart_/internal/models"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 // ----------- Моки ------------
 
-type mockRepo struct{}
+type mockRepo struct {
+	mock.Mock
+}
 
 func (m *mockRepo) CreateUser(ctx context.Context, u *models.User) error {
 	return nil
@@ -25,12 +30,13 @@ func (m *mockRepo) GetUserOrders(ctx context.Context, userID int) ([]models.Orde
 	return []models.Order{}, nil
 }
 func (m *mockRepo) ClaimOrders(ctx context.Context, limit int) ([]models.Order, error) {
-	return []models.Order{
-		{Number: "12345678903", Status: models.OrderNew, UserID: 1},
-	}, nil
+	args := m.Called(ctx, limit)
+	return args.Get(0).([]models.Order), args.Error(1)
 }
+
 func (m *mockRepo) UpdateOrderStatus(ctx context.Context, number string, status models.OrderStatus, accrual float64) error {
-	return nil
+	args := m.Called(ctx, number, status, accrual)
+	return args.Error(0)
 }
 func (m *mockRepo) GetBalance(ctx context.Context, userID int) (*models.Balance, error) {
 	return &models.Balance{Current: 100, Withdrawn: 0}, nil
@@ -44,54 +50,99 @@ func (m *mockRepo) GetWithdrawals(ctx context.Context, userID int) ([]models.Wit
 
 // ----------- Мок accrual клиента -----------
 
-type mockAccrual struct{}
-
-func (c *mockAccrual) GetOrder(number string) (*accrual.Response, int, time.Duration, error) {
-	accr := 100.0
-	return &accrual.Response{
-		Order:   number,
-		Status:  "PROCESSED",
-		Accrual: &accr,
-	}, 200, 0, nil
+type MockAccrualClient struct {
+	mock.Mock
 }
 
-// ----------- Тесты Worker -----------
-
-func TestWorker_ProcessOrder(t *testing.T) {
-	logger.Init("/dev/null", logger.DEBUG)
-	repo := &mockRepo{}
-	client := &mockAccrual{}
-
-	worker := New(repo, client)
-	worker.concurrency = 1
-	worker.interval = 50 * time.Millisecond // чтобы быстро тикнул
-
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer cancel()
-
-	worker.Start(ctx)
+func (m *MockAccrualClient) GetOrder(number string) (*accrual.Response, error) {
+	args := m.Called(number)
+	return args.Get(0).(*accrual.Response), args.Error(1)
 }
 
-func TestWorker_HandleOrder_InvalidStatus(t *testing.T) {
-	repo := &mockRepo{}
-	client := &mockAccrualInvalid{}
+// --- tests ---
 
-	w := New(repo, client)
-
-	order := models.Order{Number: "11111111111", Status: models.OrderNew, UserID: 1}
-
+func TestWorker_handleOrder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	w.handleOrder(ctx, order)
-}
+	t.Run("PROCESSED order updates accrual", func(t *testing.T) {
+		logger.Init("/dev/null", logger.DEBUG)
+		repo := &mockRepo{}
+		acClient := &MockAccrualClient{}
+		w := New(repo, acClient)
 
-// мок для INVALID заказа
-type mockAccrualInvalid struct{}
+		order := models.Order{Number: "123"}
 
-func (c *mockAccrualInvalid) GetOrder(number string) (*accrual.Response, int, time.Duration, error) {
-	return &accrual.Response{
-		Order:  number,
-		Status: "INVALID",
-	}, 200, 0, nil
+		acClient.On("GetOrder", order.Number).Return(&accrual.Response{
+			Order:   order.Number,
+			Status:  "PROCESSED",
+			Accrual: func() *float64 { v := 100.0; return &v }(),
+		}, nil)
+
+		repo.On("UpdateOrderStatus", ctx, order.Number, models.OrderProcessed, 100.0).Return(nil)
+
+		w.handleOrder(ctx, order)
+
+		acClient.AssertExpectations(t)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("INVALID order updates status to invalid", func(t *testing.T) {
+		repo := &mockRepo{}
+		acClient := &MockAccrualClient{}
+		w := New(repo, acClient)
+
+		order := models.Order{Number: "456"}
+
+		acClient.On("GetOrder", order.Number).Return(&accrual.Response{
+			Order:  order.Number,
+			Status: "INVALID",
+		}, nil)
+
+		repo.On("UpdateOrderStatus", ctx, order.Number, models.OrderInvalid, 0.0).Return(nil)
+
+		w.handleOrder(ctx, order)
+
+		acClient.AssertExpectations(t)
+		repo.AssertExpectations(t)
+	})
+
+	t.Run("PROCESSING order does not update status", func(t *testing.T) {
+		repo := &mockRepo{}
+		acClient := &MockAccrualClient{}
+		w := New(repo, acClient)
+
+		order := models.Order{Number: "789"}
+
+		acClient.On("GetOrder", order.Number).Return(&accrual.Response{
+			Order:  order.Number,
+			Status: "PROCESSING",
+		}, nil)
+
+		w.handleOrder(ctx, order)
+
+		acClient.AssertExpectations(t)
+	})
+
+	t.Run("retry on error and respect context cancellation", func(t *testing.T) {
+		repo := &mockRepo{}
+		acClient := &MockAccrualClient{}
+		w := New(repo, acClient)
+
+		order := models.Order{Number: "999"}
+
+		// Возвращаем валидный Response и ошибку, чтобы сработал retry
+		acClient.On("GetOrder", order.Number).Return(&accrual.Response{
+			Order:  order.Number,
+			Status: "NEW",
+		}, assert.AnError)
+
+		// контекст с коротким таймаутом для остановки retry
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+
+		w.handleOrder(ctx, order)
+
+		acClient.AssertExpectations(t)
+	})
 }

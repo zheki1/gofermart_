@@ -43,7 +43,7 @@ func TestClient_GetOrder(t *testing.T) {
 			respBody:   nil,
 			wantStatus: http.StatusTooManyRequests,
 			wantRetry:  3 * time.Second,
-			wantErr:    false,
+			wantErr:    true,
 		},
 		{
 			name:       "invalid JSON",
@@ -73,15 +73,9 @@ func TestClient_GetOrder(t *testing.T) {
 			srv := httptest.NewServer(handler)
 			defer srv.Close()
 
-			client := New("http://" + srv.Listener.Addr().String())
-			res, status, retry, err := client.GetOrder("12345678903")
+			client := New(srv.URL) // новый resty client
+			res, err := client.GetOrder("12345678903")
 
-			if status != tt.wantStatus {
-				t.Errorf("status = %d, want %d", status, tt.wantStatus)
-			}
-			if retry != tt.wantRetry {
-				t.Errorf("retry = %v, want %v", retry, tt.wantRetry)
-			}
 			if (err != nil) != tt.wantErr {
 				t.Errorf("error = %v, wantErr %v", err, tt.wantErr)
 			}

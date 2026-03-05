@@ -27,7 +27,7 @@ type Worker struct {
 }
 
 type AccrualClient interface {
-	GetOrder(number string) (*accrual.Response, int, time.Duration, error)
+	GetOrder(number string) (*accrual.Response, error)
 }
 
 // New создаёт нового воркера с дефолтными параметрами.
@@ -50,7 +50,6 @@ func New(repo storage.Repository, accrualClient AccrualClient) *Worker {
 // метод process() для обработки заказов.
 // handleOrder обрабатывает один заказ через accrualClient.
 // - выполняет retry с backoff при ошибках соединения
-// - учитывает код 429 и header Retry-After
 // - обновляет статус заказа через UpdateOrderStatus
 func (w *Worker) Start(ctx context.Context) {
 	ticker := time.NewTicker(w.interval)
@@ -91,7 +90,6 @@ func (w *Worker) process(ctx context.Context) {
 
 // handleOrder обрабатывает один заказ через accrualClient.
 // - выполняет retry с backoff при ошибках соединения
-// - учитывает код 429 и header Retry-After
 // - обновляет статус заказа через UpdateOrderStatus
 func (w *Worker) handleOrder(ctx context.Context, o models.Order) {
 	backoff := time.Second
@@ -104,7 +102,7 @@ func (w *Worker) handleOrder(ctx context.Context, o models.Order) {
 		default:
 		}
 
-		resp, code, retryAfter, err := w.accrualClient.GetOrder(o.Number)
+		resp, err := w.accrualClient.GetOrder(o.Number)
 		if err != nil {
 			logger.Log.Error("accrual error:", "order", o.Number, "err", err, "backoff", backoff)
 
@@ -118,19 +116,6 @@ func (w *Worker) handleOrder(ctx context.Context, o models.Order) {
 			}
 
 			backoff *= 2
-			continue
-		}
-
-		if code == 429 {
-			wait := retryAfter
-			if wait == 0 {
-				wait = 5 * time.Second
-			}
-			logger.Log.Info("rate limited:", "order", o.Number, "wait", wait)
-
-			if !w.sleep(ctx, wait) {
-				return
-			}
 			continue
 		}
 
