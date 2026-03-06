@@ -58,7 +58,7 @@ func (c *Client) GetOrder(number string) (*Response, error) {
 	if !strings.HasPrefix(baseURL, "http") {
 		baseURL = "http://" + baseURL
 	}
-	url := fmt.Sprintf("%s/api/orders/%s", c.baseURL, number)
+	url := fmt.Sprintf("%s/api/orders/%s", baseURL, number)
 
 	// retry-go для повторов при 429 или временных ошибках
 	err := retry.Do(
@@ -72,7 +72,6 @@ func (c *Client) GetOrder(number string) (*Response, error) {
 			statusCode = resp.StatusCode()
 
 			if statusCode == 429 {
-				// читаем Retry-After
 				retryAfter = 0
 				if header := resp.Header().Get("Retry-After"); header != "" {
 					if seconds, err := strconv.Atoi(header); err == nil {
