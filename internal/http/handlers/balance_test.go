@@ -1,90 +1,231 @@
 package handlers
 
-// import (
-// 	"bytes"
-// 	"context"
-// 	"encoding/json"
-// 	"gofermart_/internal/http/middleware"
-// 	"net/http"
-// 	"net/http/httptest"
-// 	"testing"
-// )
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
 
-// // Withdraw тесты
-// func TestBalanceHandler_Withdraw(t *testing.T) {
-// 	h := &BalanceHandler{Repo: &mockRepo{}}
+	"github.com/stretchr/testify/require"
 
-// 	tests := []struct {
-// 		name       string
-// 		order      string
-// 		sum        float64
-// 		ctxUserID  interface{}
-// 		wantStatus int
-// 	}{
-// 		{"ok", "4532015112830366", 10, 1, http.StatusOK},                 // валидный Luhn
-// 		{"not enough", "79927398713", 10, 1, http.StatusPaymentRequired}, // валидный Luhn
-// 		{"invalid sum", "4532015112830366", 0, 1, http.StatusBadRequest},
-// 		{"invalid order", "123", 10, 1, http.StatusUnprocessableEntity},
-// 		{"unauthorized", "4532015112830366", 10, nil, http.StatusUnauthorized},
-// 	}
+	"gofermart_/internal/http/middleware"
+	"gofermart_/internal/models"
+	"gofermart_/internal/service"
+)
 
-// 	for _, tt := range tests {
-// 		body := map[string]interface{}{"order": tt.order, "sum": tt.sum}
-// 		b, _ := json.Marshal(body)
-// 		req := httptest.NewRequest("POST", "/api/user/balance/withdraw", bytes.NewReader(b))
-// 		if tt.ctxUserID != nil {
-// 			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, tt.ctxUserID))
-// 		}
-// 		w := httptest.NewRecorder()
+type mockBalanceService struct {
+	withdrawFn       func(ctx context.Context, userID int, order string, sum float64) error
+	getBalanceFn     func(ctx context.Context, userID int) (*models.Balance, error)
+	getWithdrawalsFn func(ctx context.Context, userID int) ([]models.Withdrawal, error)
+}
 
-// 		h.Withdraw(w, req)
+func (m *mockBalanceService) Withdraw(ctx context.Context, userID int, order string, sum float64) error {
+	return m.withdrawFn(ctx, userID, order, sum)
+}
 
-// 		if w.Code != tt.wantStatus {
-// 			t.Errorf("%s: expected %d, got %d", tt.name, tt.wantStatus, w.Code)
-// 		}
-// 	}
-// }
+func (m *mockBalanceService) GetBalance(ctx context.Context, userID int) (*models.Balance, error) {
+	return m.getBalanceFn(ctx, userID)
+}
 
-// // Get тесты
-// func TestBalanceHandler_Get(t *testing.T) {
-// 	h := &BalanceHandler{Repo: &mockRepo{}}
+func (m *mockBalanceService) GetWithdrawals(ctx context.Context, userID int) ([]models.Withdrawal, error) {
+	return m.getWithdrawalsFn(ctx, userID)
+}
 
-// 	req := httptest.NewRequest("GET", "/api/user/balance", nil)
-// 	req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, 1))
-// 	w := httptest.NewRecorder()
+func authCtx() context.Context {
+	return context.WithValue(context.Background(), middleware.UserIDKey, 1)
+}
 
-// 	h.Get(w, req)
+func TestWithdraw_Unauthorized(t *testing.T) {
 
-// 	if w.Code != http.StatusOK {
-// 		t.Fatalf("expected 200, got %d", w.Code)
-// 	}
-// }
+	h := NewBalanceHandler(&mockBalanceService{})
 
-// // Withdrawals тесты
-// func TestBalanceHandler_Withdrawals(t *testing.T) {
-// 	h := &BalanceHandler{Repo: &mockRepo{}}
+	req := httptest.NewRequest(http.MethodPost, "/withdraw", nil)
+	w := httptest.NewRecorder()
 
-// 	tests := []struct {
-// 		name       string
-// 		ctxUserID  interface{}
-// 		wantStatus int
-// 	}{
-// 		{"with withdrawals", 1, http.StatusOK},
-// 		{"no withdrawals", 2, http.StatusNoContent},
-// 		{"unauthorized", nil, http.StatusUnauthorized},
-// 	}
+	h.Withdraw(w, req)
 
-// 	for _, tt := range tests {
-// 		req := httptest.NewRequest("GET", "/api/user/withdrawals", nil)
-// 		if tt.ctxUserID != nil {
-// 			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, tt.ctxUserID))
-// 		}
-// 		w := httptest.NewRecorder()
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+}
 
-// 		h.Withdrawals(w, req)
+func TestWithdraw_InvalidJSON(t *testing.T) {
 
-// 		if w.Code != tt.wantStatus {
-// 			t.Errorf("%s: expected %d, got %d", tt.name, tt.wantStatus, w.Code)
-// 		}
-// 	}
-// }
+	h := NewBalanceHandler(&mockBalanceService{})
+
+	req := httptest.NewRequest(http.MethodPost, "/withdraw", bytes.NewBufferString("bad"))
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Withdraw(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestWithdraw_InvalidSum(t *testing.T) {
+
+	s := &mockBalanceService{
+		withdrawFn: func(ctx context.Context, userID int, order string, sum float64) error {
+			return service.ErrInvalidSum
+		},
+	}
+
+	h := NewBalanceHandler(s)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"order": "79927398713",
+		"sum":   -10,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/withdraw", bytes.NewBuffer(body))
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Withdraw(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestWithdraw_InvalidOrder(t *testing.T) {
+
+	s := &mockBalanceService{
+		withdrawFn: func(ctx context.Context, userID int, order string, sum float64) error {
+			return service.ErrInvalidOrderNumber
+		},
+	}
+
+	h := NewBalanceHandler(s)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"order": "123",
+		"sum":   10,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/withdraw", bytes.NewBuffer(body))
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Withdraw(w, req)
+
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+func TestWithdraw_NotEnoughFunds(t *testing.T) {
+
+	s := &mockBalanceService{
+		withdrawFn: func(ctx context.Context, userID int, order string, sum float64) error {
+			return service.ErrNotEnoughFunds
+		},
+	}
+
+	h := NewBalanceHandler(s)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"order": "79927398713",
+		"sum":   10,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/withdraw", bytes.NewBuffer(body))
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Withdraw(w, req)
+
+	require.Equal(t, http.StatusPaymentRequired, w.Code)
+}
+
+func TestWithdraw_Success(t *testing.T) {
+
+	s := &mockBalanceService{
+		withdrawFn: func(ctx context.Context, userID int, order string, sum float64) error {
+			return nil
+		},
+	}
+
+	h := NewBalanceHandler(s)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"order": "79927398713",
+		"sum":   10,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/withdraw", bytes.NewBuffer(body))
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Withdraw(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGetBalance_Success(t *testing.T) {
+
+	s := &mockBalanceService{
+		getBalanceFn: func(ctx context.Context, userID int) (*models.Balance, error) {
+			return &models.Balance{Current: 100, Withdrawn: 50}, nil
+		},
+	}
+
+	h := NewBalanceHandler(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/balance", nil)
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Get(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestWithdrawals_NoContent(t *testing.T) {
+
+	s := &mockBalanceService{
+		getWithdrawalsFn: func(ctx context.Context, userID int) ([]models.Withdrawal, error) {
+			return []models.Withdrawal{}, nil
+		},
+	}
+
+	h := NewBalanceHandler(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/withdrawals", nil)
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Withdrawals(w, req)
+
+	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+func TestWithdrawals_Success(t *testing.T) {
+
+	s := &mockBalanceService{
+		getWithdrawalsFn: func(ctx context.Context, userID int) ([]models.Withdrawal, error) {
+			return []models.Withdrawal{
+				{
+					Order:       "12345678903",
+					Sum:         10,
+					ProcessedAt: time.Now(),
+				},
+			}, nil
+		},
+	}
+
+	h := NewBalanceHandler(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/withdrawals", nil)
+	req = req.WithContext(authCtx())
+
+	w := httptest.NewRecorder()
+
+	h.Withdrawals(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}

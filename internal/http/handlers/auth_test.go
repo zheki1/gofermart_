@@ -1,51 +1,195 @@
 package handlers
 
-// import (
-// 	"gofermart_/internal/auth"
-// 	"net/http"
-// 	"net/http/httptest"
-// 	"strings"
-// 	"testing"
-// )
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
 
-// func TestAuthHandler_Register(t *testing.T) {
-// 	auth.Init("test-secret")
-// 	h := &AuthHandler{Repo: &mockRepo{}}
+	"github.com/stretchr/testify/require"
 
-// 	req := httptest.NewRequest("POST", "/api/user/register",
-// 		strings.NewReader(`{"login":"test","password":"123456"}`))
-// 	req.Header.Set("Content-Type", "application/json")
+	"gofermart_/internal/models"
+	"gofermart_/internal/service"
+)
 
-// 	w := httptest.NewRecorder()
-// 	h.Register(w, req)
+type mockAuthService struct {
+	registerFn func(models.Credentials) (string, error)
+	loginFn    func(models.Credentials) (string, error)
+}
 
-// 	if w.Code != http.StatusOK {
-// 		t.Errorf("expected 200 OK, got %d", w.Code)
-// 	}
+func (m *mockAuthService) Register(ctx context.Context, c models.Credentials) (string, error) {
+	return m.registerFn(c)
+}
 
-// 	authHeader := w.Header().Get("Authorization")
-// 	if !strings.HasPrefix(authHeader, "Bearer ") {
-// 		t.Errorf("expected Authorization header with Bearer token, got %q", authHeader)
-// 	}
-// }
+func (m *mockAuthService) Login(ctx context.Context, c models.Credentials) (string, error) {
+	return m.loginFn(c)
+}
 
-// func TestAuthHandler_Login(t *testing.T) {
-// 	auth.Init("test-secret")
-// 	h := &AuthHandler{Repo: &mockRepo{}}
+func TestRegister_InvalidJSON(t *testing.T) {
 
-// 	req := httptest.NewRequest("POST", "/api/user/login",
-// 		strings.NewReader(`{"login":"test","password":"123456"}`))
-// 	req.Header.Set("Content-Type", "application/json")
+	h := NewAuthHandler(&mockAuthService{})
 
-// 	w := httptest.NewRecorder()
-// 	h.Login(w, req)
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBufferString("invalid"))
+	w := httptest.NewRecorder()
 
-// 	if w.Code != http.StatusOK {
-// 		t.Errorf("expected 200 OK, got %d", w.Code)
-// 	}
+	h.Register(w, req)
 
-// 	authHeader := w.Header().Get("Authorization")
-// 	if !strings.HasPrefix(authHeader, "Bearer ") {
-// 		t.Errorf("expected Authorization header with Bearer token, got %q", authHeader)
-// 	}
-// }
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRegister_InvalidCredentials(t *testing.T) {
+
+	s := &mockAuthService{
+		registerFn: func(c models.Credentials) (string, error) {
+			return "", service.ErrInvalidCredentials
+		},
+	}
+
+	h := NewAuthHandler(s)
+
+	body, _ := json.Marshal(models.Credentials{Login: "", Password: ""})
+
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	h.Register(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestRegister_UserExists(t *testing.T) {
+
+	s := &mockAuthService{
+		registerFn: func(c models.Credentials) (string, error) {
+			return "", service.ErrUserExists
+		},
+	}
+
+	h := NewAuthHandler(s)
+
+	body, _ := json.Marshal(models.Credentials{Login: "user", Password: "pass"})
+
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	h.Register(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestRegister_InternalError(t *testing.T) {
+
+	s := &mockAuthService{
+		registerFn: func(c models.Credentials) (string, error) {
+			return "", errors.New("db error")
+		},
+	}
+
+	h := NewAuthHandler(s)
+
+	body, _ := json.Marshal(models.Credentials{Login: "user", Password: "pass"})
+
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	h.Register(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestRegister_Success(t *testing.T) {
+
+	s := &mockAuthService{
+		registerFn: func(c models.Credentials) (string, error) {
+			return "token123", nil
+		},
+	}
+
+	h := NewAuthHandler(s)
+
+	body, _ := json.Marshal(models.Credentials{Login: "user", Password: "pass"})
+
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	h.Register(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "Bearer token123", w.Header().Get("Authorization"))
+}
+
+func TestLogin_InvalidJSON(t *testing.T) {
+
+	h := NewAuthHandler(&mockAuthService{})
+
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBufferString("invalid"))
+	w := httptest.NewRecorder()
+
+	h.Login(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestLogin_InvalidCredentials(t *testing.T) {
+
+	s := &mockAuthService{
+		loginFn: func(c models.Credentials) (string, error) {
+			return "", service.ErrInvalidCredentials
+		},
+	}
+
+	h := NewAuthHandler(s)
+
+	body, _ := json.Marshal(models.Credentials{Login: "user", Password: "wrong"})
+
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	h.Login(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestLogin_InternalError(t *testing.T) {
+
+	s := &mockAuthService{
+		loginFn: func(c models.Credentials) (string, error) {
+			return "", errors.New("db error")
+		},
+	}
+
+	h := NewAuthHandler(s)
+
+	body, _ := json.Marshal(models.Credentials{Login: "user", Password: "pass"})
+
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	h.Login(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestLogin_Success(t *testing.T) {
+
+	s := &mockAuthService{
+		loginFn: func(c models.Credentials) (string, error) {
+			return "token123", nil
+		},
+	}
+
+	h := NewAuthHandler(s)
+
+	body, _ := json.Marshal(models.Credentials{Login: "user", Password: "pass"})
+
+	req := httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+
+	h.Login(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "Bearer token123", w.Header().Get("Authorization"))
+}

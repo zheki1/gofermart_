@@ -10,4 +10,5 @@ var (
 	ErrUserExists          = errors.New("login already exists")
 	ErrOrderExistsForUser  = errors.New("order already uploaded by this user")
 	ErrOrderExistsForOther = errors.New("order uploaded by another user")
+	ErrUserNotFound        = errors.New("user not found")
 )

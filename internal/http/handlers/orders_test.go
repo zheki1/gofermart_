@@ -1,72 +1,187 @@
 package handlers
 
-// import (
-// 	"context"
-// 	"gofermart_/internal/http/middleware"
-// 	"net/http"
-// 	"net/http/httptest"
-// 	"strings"
-// 	"testing"
-// )
+import (
+	"bytes"
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
 
-// // тест Upload
-// func TestOrderHandler_Upload(t *testing.T) {
-// 	h := &OrderHandler{Repo: &mockRepo{}}
+	"gofermart_/internal/http/middleware"
+	"gofermart_/internal/models"
+	"gofermart_/internal/service"
 
-// 	tests := []struct {
-// 		name       string
-// 		orderNum   string
-// 		ctxUserID  interface{}
-// 		wantStatus int
-// 	}{
-// 		{"new order", "79927398713", 1, http.StatusAccepted},
-// 		{"exists for user", "4532015112830366", 1, http.StatusOK},        // валидный Luhn
-// 		{"exists for other", "4485275742308327", 1, http.StatusConflict}, // валидный Luhn
-// 		{"invalid Luhn", "123", 1, http.StatusUnprocessableEntity},
-// 		{"empty order", "", 1, http.StatusBadRequest},
-// 		{"unauthorized", "79927398713", nil, http.StatusUnauthorized},
-// 	}
+	"github.com/stretchr/testify/require"
+)
 
-// 	for _, tt := range tests {
-// 		req := httptest.NewRequest("POST", "/api/user/orders", strings.NewReader(tt.orderNum))
-// 		if tt.ctxUserID != nil {
-// 			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, tt.ctxUserID))
-// 		}
-// 		w := httptest.NewRecorder()
+type mockOrderService struct {
+	createFunc func(ctx context.Context, userID int, number string) error
+	listFunc   func(ctx context.Context, userID int) ([]models.Order, error)
+}
 
-// 		h.Upload(w, req)
+func (m *mockOrderService) CreateOrder(ctx context.Context, userID int, number string) error {
+	return m.createFunc(ctx, userID, number)
+}
 
-// 		if w.Code != tt.wantStatus {
-// 			t.Errorf("%s: expected %d, got %d", tt.name, tt.wantStatus, w.Code)
-// 		}
-// 	}
-// }
+func (m *mockOrderService) GetUserOrders(ctx context.Context, userID int) ([]models.Order, error) {
+	return m.listFunc(ctx, userID)
+}
 
-// // тест List
-// func TestOrderHandler_List(t *testing.T) {
-// 	h := &OrderHandler{Repo: &mockRepo{}}
+func authCtxR(req *http.Request) *http.Request {
+	ctx := context.WithValue(req.Context(), middleware.UserIDKey, 1)
+	return req.WithContext(ctx)
+}
 
-// 	tests := []struct {
-// 		name       string
-// 		ctxUserID  interface{}
-// 		wantStatus int
-// 	}{
-// 		{"with orders", 1, http.StatusOK},
-// 		{"no orders", 2, http.StatusNoContent},
-// 		{"unauthorized", nil, http.StatusUnauthorized},
-// 	}
+func TestOrderHandler_Upload(t *testing.T) {
 
-// 	for _, tt := range tests {
-// 		req := httptest.NewRequest("GET", "/api/user/orders", nil)
-// 		if tt.ctxUserID != nil {
-// 			req = req.WithContext(context.WithValue(req.Context(), middleware.UserIDKey, tt.ctxUserID))
-// 		}
-// 		w := httptest.NewRecorder()
+	tests := []struct {
+		name       string
+		body       string
+		serviceErr error
+		expected   int
+	}{
+		{
+			name:     "success",
+			body:     "79927398713",
+			expected: http.StatusAccepted,
+		},
+		{
+			name:       "invalid order number",
+			body:       "123",
+			serviceErr: service.ErrInvalidOrderNumber,
+			expected:   http.StatusUnprocessableEntity,
+		},
+		{
+			name:       "exists for user",
+			body:       "79927398713",
+			serviceErr: service.ErrOrderExistsForUser,
+			expected:   http.StatusOK,
+		},
+		{
+			name:       "exists for other",
+			body:       "79927398713",
+			serviceErr: service.ErrOrderExistsForOther,
+			expected:   http.StatusConflict,
+		},
+		{
+			name:       "internal error",
+			body:       "79927398713",
+			serviceErr: errors.New("db error"),
+			expected:   http.StatusInternalServerError,
+		},
+	}
 
-// 		h.List(w, req)
+	for _, tt := range tests {
 
-// 		if w.Code != tt.wantStatus {
-// 			t.Errorf("%s: expected %d, got %d", tt.name, tt.wantStatus, w.Code)
-// 		}
-// 	}
-// }
+		t.Run(tt.name, func(t *testing.T) {
+
+			mock := &mockOrderService{
+				createFunc: func(ctx context.Context, userID int, number string) error {
+					return tt.serviceErr
+				},
+			}
+
+			handler := NewOrderHandler(mock)
+
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/user/orders",
+				bytes.NewBufferString(tt.body),
+			)
+
+			req = authCtxR(req)
+
+			rec := httptest.NewRecorder()
+
+			handler.Upload(rec, req)
+
+			require.Equal(t, tt.expected, rec.Code)
+		})
+	}
+}
+
+func TestOrderHandler_Upload_EmptyBody(t *testing.T) {
+
+	mock := &mockOrderService{}
+
+	handler := NewOrderHandler(mock)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/user/orders",
+		bytes.NewBufferString(" "),
+	)
+
+	req = authCtxR(req)
+
+	rec := httptest.NewRecorder()
+
+	handler.Upload(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestOrderHandler_List(t *testing.T) {
+
+	now := time.Now()
+
+	tests := []struct {
+		name     string
+		orders   []models.Order
+		err      error
+		expected int
+	}{
+		{
+			name:     "orders exist",
+			expected: http.StatusOK,
+			orders: []models.Order{
+				{
+					Number:     "79927398713",
+					Status:     models.OrderProcessed,
+					Accrual:    100,
+					UploadedAt: now,
+				},
+			},
+		},
+		{
+			name:     "no orders",
+			expected: http.StatusNoContent,
+			orders:   []models.Order{},
+		},
+		{
+			name:     "internal error",
+			expected: http.StatusInternalServerError,
+			err:      errors.New("db error"),
+		},
+	}
+
+	for _, tt := range tests {
+
+		t.Run(tt.name, func(t *testing.T) {
+
+			mock := &mockOrderService{
+				listFunc: func(ctx context.Context, userID int) ([]models.Order, error) {
+					return tt.orders, tt.err
+				},
+			}
+
+			handler := NewOrderHandler(mock)
+
+			req := httptest.NewRequest(
+				http.MethodGet,
+				"/api/user/orders",
+				nil,
+			)
+
+			req = authCtxR(req)
+
+			rec := httptest.NewRecorder()
+
+			handler.List(rec, req)
+
+			require.Equal(t, tt.expected, rec.Code)
+		})
+	}
+}
