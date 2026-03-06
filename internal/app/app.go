@@ -54,7 +54,8 @@ func New() (*App, error) {
 	accrualClient := accrual.New(cfg.AccrualSystemAddress)
 	w := worker.New(db, accrualClient)
 
-	router := httptransport.NewRouter(db)
+	container := httptransport.NewContainer(db)
+	router := httptransport.NewRouter(container)
 
 	srv := &http.Server{
 		Addr:         cfg.RunAddress,

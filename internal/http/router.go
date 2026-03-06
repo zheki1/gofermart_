@@ -7,7 +7,6 @@ import (
 
 	"gofermart_/internal/http/handlers"
 	"gofermart_/internal/http/middleware"
-	"gofermart_/internal/storage"
 )
 
 // NewRouter создаёт и возвращает новый HTTP-роутер.
@@ -26,16 +25,16 @@ import (
 //
 // Дополнительно:
 // - GET /chin — тестовый защищённый маршрут, возвращает "chopa authorized".
-func NewRouter(repo storage.Repository) http.Handler {
+func NewRouter(c *Container) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logging)
 
-	authH := &handlers.AuthHandler{Repo: repo}
+	authH := handlers.NewAuthHandler(c.AuthService)
 	r.Post("/api/user/register", authH.Register)
 	r.Post("/api/user/login", authH.Login)
 
-	orderH := &handlers.OrderHandler{Repo: repo}
-	balanceH := &handlers.BalanceHandler{Repo: repo}
+	orderH := handlers.NewOrderHandler(c.OrderService)
+	balanceH := handlers.NewBalanceHandler(c.BalanceService)
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth)
 		r.Post("/api/user/orders", orderH.Upload)

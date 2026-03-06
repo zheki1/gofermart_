@@ -2,18 +2,23 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
 	"gofermart_/internal/helpers"
 	"gofermart_/internal/http/middleware"
 	"gofermart_/internal/logger"
-	"gofermart_/internal/storage"
+	"gofermart_/internal/service"
 )
 
 // BalanceHandler обрабатывает запросы, связанные с балансом пользователя.
 type BalanceHandler struct {
-	Repo storage.Repository
+	Service service.BalanceService
+}
+
+func NewBalanceHandler(s service.BalanceService) *BalanceHandler {
+	return &BalanceHandler{Service: s}
 }
 
 // Withdraw обрабатывает запрос на снятие средств пользователем.
@@ -28,15 +33,9 @@ type BalanceHandler struct {
 // - 422 Unprocessable Entity — неверный номер заказа
 // - 500 Internal Server Error — внутренняя ошибка сервиса
 func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
-	uidValue := r.Context().Value(middleware.UserIDKey)
-	if uidValue == nil {
-		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	uid, ok := uidValue.(int)
-	if !ok {
-		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
+	uid, err := helpers.GetUserID(r.Context())
+	if err != nil {
+		helpers.WriteJSONError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -51,23 +50,17 @@ func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Sum <= 0 {
-		helpers.WriteJSONError(w, "invalid sum", http.StatusBadRequest)
-		return
-	}
+	err = h.Service.Withdraw(r.Context(), uid, req.Order, req.Sum)
 
-	if !helpers.ValidLuhn(req.Order) {
-		helpers.WriteJSONError(w, "invalid order number", http.StatusUnprocessableEntity)
-		return
-	}
-
-	err := h.Repo.Withdraw(r.Context(), uid, req.Order, req.Sum)
-
-	switch err {
-	case nil:
+	switch {
+	case err == nil:
 		w.WriteHeader(http.StatusOK)
-	case storage.ErrNotEnoughFunds:
-		helpers.WriteJSONError(w, "not enough funds", http.StatusPaymentRequired)
+	case errors.Is(err, service.ErrInvalidSum):
+		helpers.WriteJSONError(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, service.ErrInvalidOrderNumber):
+		helpers.WriteJSONError(w, err.Error(), http.StatusUnprocessableEntity)
+	case errors.Is(err, service.ErrNotEnoughFunds):
+		helpers.WriteJSONError(w, err.Error(), http.StatusPaymentRequired)
 	default:
 		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
 	}
@@ -82,19 +75,14 @@ func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 // - 401 Unauthorized — пользователь не авторизован
 // - 500 Internal Server Error — внутренняя ошибка сервиса
 func (h *BalanceHandler) Get(w http.ResponseWriter, r *http.Request) {
-	uidValue := r.Context().Value(middleware.UserIDKey)
-	if uidValue == nil {
-		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	uid, ok := uidValue.(int)
+	uidVal := r.Context().Value(middleware.UserIDKey)
+	uid, ok := uidVal.(int)
 	if !ok {
 		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	balance, err := h.Repo.GetBalance(r.Context(), uid)
+	balance, err := h.Service.GetBalance(r.Context(), uid)
 	if err != nil {
 		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -128,19 +116,13 @@ func (h *BalanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 // - 401 Unauthorized — пользователь не авторизован
 // - 500 Internal Server Error — внутренняя ошибка сервиса
 func (h *BalanceHandler) Withdrawals(w http.ResponseWriter, r *http.Request) {
-	uidVal := r.Context().Value(middleware.UserIDKey)
-	if uidVal == nil {
-		w.WriteHeader(http.StatusUnauthorized)
+	uid, err := helpers.GetUserID(r.Context())
+	if err != nil {
+		helpers.WriteJSONError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	uid, ok := uidVal.(int)
-	if !ok {
-		w.WriteHeader(http.StatusUnauthorized)
-		return
-	}
-
-	list, err := h.Repo.GetWithdrawals(r.Context(), uid)
+	list, err := h.Service.GetWithdrawals(r.Context(), uid)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		return

@@ -5,15 +5,18 @@ import (
 	"errors"
 	"net/http"
 
-	"gofermart_/internal/auth"
 	"gofermart_/internal/helpers"
 	"gofermart_/internal/models"
-	"gofermart_/internal/storage"
+	"gofermart_/internal/service"
 )
 
 // AuthHandler предоставляет методы для регистрации и аутентификации пользователей.
 type AuthHandler struct {
-	Repo storage.Repository
+	Service service.AuthService
+}
+
+func NewAuthHandler(s service.AuthService) *AuthHandler {
+	return &AuthHandler{Service: s}
 }
 
 // Register обрабатывает запрос на регистрацию нового пользователя.
@@ -30,33 +33,19 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if c.Login == "" || c.Password == "" {
-		helpers.WriteJSONError(w, "login and password required", http.StatusBadRequest)
-		return
-	}
-
-	hash, err := auth.HashPassword(c.Password)
+	token, err := h.Service.Register(r.Context(), c)
 	if err != nil {
-		helpers.WriteJSONError(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 
-	u := &models.User{
-		Login:        c.Login,
-		PasswordHash: hash,
-	}
-
-	if err := h.Repo.CreateUser(r.Context(), u); err != nil {
-		if errors.Is(err, storage.ErrUserExists) {
-			helpers.WriteJSONError(w, "login already exists", http.StatusConflict)
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			helpers.WriteJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		helpers.WriteJSONError(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 
-	token, err := auth.GenerateToken(u.ID)
-	if err != nil {
+		if errors.Is(err, service.ErrUserExists) {
+			helpers.WriteJSONError(w, err.Error(), http.StatusConflict)
+			return
+		}
+
 		helpers.WriteJSONError(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -80,28 +69,19 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if c.Login == "" || c.Password == "" {
-		helpers.WriteJSONError(w, "login and password required", http.StatusBadRequest)
-		return
-	}
-
-	u, err := h.Repo.GetUserByLogin(r.Context(), c.Login)
+	token, err := h.Service.Login(r.Context(), c)
 	if err != nil {
-		if errors.Is(err, storage.ErrUserNotFound) {
-			helpers.WriteJSONError(w, "invalid login or password", http.StatusUnauthorized)
+
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			helpers.WriteJSONError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		helpers.WriteJSONError(w, "internal error", http.StatusInternalServerError)
-		return
-	}
 
-	if err := auth.CheckPassword(u.PasswordHash, c.Password); err != nil {
-		helpers.WriteJSONError(w, "invalid login or password", http.StatusUnauthorized)
-		return
-	}
+		if errors.Is(err, service.ErrInvalidCredentials) {
+			helpers.WriteJSONError(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
 
-	token, err := auth.GenerateToken(u.ID)
-	if err != nil {
 		helpers.WriteJSONError(w, "internal error", http.StatusInternalServerError)
 		return
 	}

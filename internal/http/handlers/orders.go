@@ -2,21 +2,25 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"gofermart_/internal/helpers"
-	"gofermart_/internal/http/middleware"
 	"gofermart_/internal/logger"
 	"gofermart_/internal/models"
-	"gofermart_/internal/storage"
+	"gofermart_/internal/service"
 )
 
 // OrderHandler обрабатывает запросы, связанные с заказами пользователей.
 type OrderHandler struct {
-	Repo storage.Repository
+	Service service.OrderService
+}
+
+func NewOrderHandler(s service.OrderService) *OrderHandler {
+	return &OrderHandler{Service: s}
 }
 
 // Upload загружает новый заказ для авторизованного пользователя.
@@ -30,15 +34,9 @@ type OrderHandler struct {
 // - 422 Unprocessable Entity — неверный номер заказа (Luhn не проходит)
 // - 500 Internal Server Error — внутренняя ошибка сервиса
 func (h *OrderHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	uidValue := r.Context().Value(middleware.UserIDKey)
-	if uidValue == nil {
-		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	uid, ok := uidValue.(int)
-	if !ok {
-		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
+	uid, err := helpers.GetUserID(r.Context())
+	if err != nil {
+		helpers.WriteJSONError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
@@ -54,35 +52,18 @@ func (h *OrderHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !helpers.ValidLuhn(number) {
-		helpers.WriteJSONError(w, "invalid order number", http.StatusUnprocessableEntity)
-		return
-	}
-
-	order := &models.Order{
-		Number: number,
-		UserID: uid,
-		Status: models.OrderNew,
-	}
-
-	err = h.Repo.CreateOrder(r.Context(), order)
-
-	switch err {
-	case nil:
+	err = h.Service.CreateOrder(r.Context(), uid, number)
+	switch {
+	case err == nil:
 		w.WriteHeader(http.StatusAccepted)
-		return
-
-	case storage.ErrOrderExistsForUser:
+	case errors.Is(err, service.ErrInvalidOrderNumber):
+		helpers.WriteJSONError(w, err.Error(), http.StatusUnprocessableEntity)
+	case errors.Is(err, service.ErrOrderExistsForUser):
 		w.WriteHeader(http.StatusOK)
-		return
-
-	case storage.ErrOrderExistsForOther:
-		helpers.WriteJSONError(w, "order already uploaded by another user", http.StatusConflict)
-		return
-
+	case errors.Is(err, service.ErrOrderExistsForOther):
+		helpers.WriteJSONError(w, err.Error(), http.StatusConflict)
 	default:
 		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
-		return
 	}
 }
 
@@ -94,19 +75,13 @@ func (h *OrderHandler) Upload(w http.ResponseWriter, r *http.Request) {
 // - 401 Unauthorized — пользователь не авторизован
 // - 500 Internal Server Error — внутренняя ошибка сервиса
 func (h *OrderHandler) List(w http.ResponseWriter, r *http.Request) {
-	uidValue := r.Context().Value(middleware.UserIDKey)
-	if uidValue == nil {
-		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
+	uid, err := helpers.GetUserID(r.Context())
+	if err != nil {
+		helpers.WriteJSONError(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
 
-	uid, ok := uidValue.(int)
-	if !ok {
-		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	orders, err := h.Repo.GetUserOrders(r.Context(), uid)
+	orders, err := h.Service.GetUserOrders(r.Context(), uid)
 	if err != nil {
 		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
 		return
