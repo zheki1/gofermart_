@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"gofermart_/internal/helpers"
 	"gofermart_/internal/http/middleware"
 	"gofermart_/internal/logger"
 	"gofermart_/internal/models"
-	"gofermart_/internal/service"
 	"gofermart_/internal/storage"
 )
 
@@ -32,30 +32,30 @@ type OrderHandler struct {
 func (h *OrderHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	uidValue := r.Context().Value(middleware.UserIDKey)
 	if uidValue == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	uid, ok := uidValue.(int)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		helpers.WriteJSONError(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	number := strings.TrimSpace(string(body))
 	if number == "" {
-		http.Error(w, "empty order number", http.StatusBadRequest)
+		helpers.WriteJSONError(w, "empty order number", http.StatusBadRequest)
 		return
 	}
 
-	if !service.ValidLuhn(number) {
-		http.Error(w, "invalid order number", http.StatusUnprocessableEntity)
+	if !helpers.ValidLuhn(number) {
+		helpers.WriteJSONError(w, "invalid order number", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -77,11 +77,11 @@ func (h *OrderHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 
 	case storage.ErrOrderExistsForOther:
-		http.Error(w, "order already uploaded by another user", http.StatusConflict)
+		helpers.WriteJSONError(w, "order already uploaded by another user", http.StatusConflict)
 		return
 
 	default:
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 }
@@ -96,19 +96,19 @@ func (h *OrderHandler) Upload(w http.ResponseWriter, r *http.Request) {
 func (h *OrderHandler) List(w http.ResponseWriter, r *http.Request) {
 	uidValue := r.Context().Value(middleware.UserIDKey)
 	if uidValue == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	uid, ok := uidValue.(int)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	orders, err := h.Repo.GetUserOrders(r.Context(), uid)
 	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 

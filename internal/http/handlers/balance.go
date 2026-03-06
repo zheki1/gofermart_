@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"time"
 
+	"gofermart_/internal/helpers"
 	"gofermart_/internal/http/middleware"
 	"gofermart_/internal/logger"
-	"gofermart_/internal/service"
 	"gofermart_/internal/storage"
 )
 
@@ -30,13 +30,13 @@ type BalanceHandler struct {
 func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 	uidValue := r.Context().Value(middleware.UserIDKey)
 	if uidValue == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	uid, ok := uidValue.(int)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -47,17 +47,17 @@ func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 
 	var req request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
+		helpers.WriteJSONError(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 
 	if req.Sum <= 0 {
-		http.Error(w, "invalid sum", http.StatusBadRequest)
+		helpers.WriteJSONError(w, "invalid sum", http.StatusBadRequest)
 		return
 	}
 
-	if !service.ValidLuhn(req.Order) {
-		http.Error(w, "invalid order number", http.StatusUnprocessableEntity)
+	if !helpers.ValidLuhn(req.Order) {
+		helpers.WriteJSONError(w, "invalid order number", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -67,9 +67,9 @@ func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 	case nil:
 		w.WriteHeader(http.StatusOK)
 	case storage.ErrNotEnoughFunds:
-		http.Error(w, "not enough funds", http.StatusPaymentRequired)
+		helpers.WriteJSONError(w, "not enough funds", http.StatusPaymentRequired)
 	default:
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -84,19 +84,19 @@ func (h *BalanceHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 func (h *BalanceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	uidValue := r.Context().Value(middleware.UserIDKey)
 	if uidValue == nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	uid, ok := uidValue.(int)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		helpers.WriteJSONError(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	balance, err := h.Repo.GetBalance(r.Context(), uid)
 	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		helpers.WriteJSONError(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 

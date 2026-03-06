@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/avast/retry-go"
@@ -53,8 +54,11 @@ func (c *Client) GetOrder(number string) (*Response, error) {
 		retryAfter time.Duration
 		lastErr    error
 	)
-
-	url := fmt.Sprintf("http://%s/api/orders/%s", c.baseURL, number)
+	baseURL := strings.TrimSpace(c.baseURL)
+	if !strings.HasPrefix(baseURL, "http") {
+		baseURL = "http://" + baseURL
+	}
+	url := fmt.Sprintf("%s/api/orders/%s", c.baseURL, number)
 
 	// retry-go для повторов при 429 или временных ошибках
 	err := retry.Do(
