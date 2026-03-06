@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"gofermart_/internal/logger"
 	"gofermart_/internal/models"
 
 	"github.com/Masterminds/squirrel"
@@ -26,7 +27,7 @@ func (p *Postgres) Withdraw(ctx context.Context, userID int, order string, sum f
 		return err
 	}
 
-	_, err = tx.Exec(ctx, query, args)
+	_, err = tx.Exec(ctx, query, args...)
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
 			return ErrOrderAlreadyWithdrawn
@@ -47,6 +48,7 @@ func (p *Postgres) Withdraw(ctx context.Context, userID int, order string, sum f
 
 	tag, err := tx.Exec(ctx, queryUp, args...)
 	if err != nil {
+		logger.Log.Debug(query, args, err)
 		return err
 	}
 
