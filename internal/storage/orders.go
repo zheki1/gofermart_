@@ -106,38 +106,23 @@ func (p *Postgres) ClaimOrders(ctx context.Context, limit int) ([]models.Order, 
 	}
 	defer tx.Rollback(ctx)
 
-	subQuery, args, err := p.sb.
-		Select("number").
-		From("orders").
-		Where(
-			squirrel.Or{
-				squirrel.Eq{"status": "NEW"},
-				squirrel.Expr("status = 'PROCESSING' AND updated_at < now() - interval '2 second'"),
-			},
-		).
-		OrderBy("updated_at").
-		Suffix("FOR UPDATE SKIP LOCKED").
-		Limit(uint64(limit)).
-		ToSql()
+	rows, err := tx.Query(ctx, `
+		UPDATE orders
+		SET status='PROCESSING', updated_at = now()
+		WHERE number IN (
+			SELECT number
+			FROM orders
+			WHERE status='NEW' OR (status='PROCESSING' AND updated_at < now() - interval '2 second')
+			ORDER BY updated_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		RETURNING number, user_id, status, accrual, uploaded_at
+	`, limit)
 	if err != nil {
 		return nil, err
 	}
 
-	query, args, err := p.sb.
-		Update("orders").
-		Set("status", "PROCESSING").
-		Set("updated_at", squirrel.Expr("now()")).
-		Where("number IN (" + subQuery + ")").
-		Suffix("RETURNING number, user_id, status, accrual, uploaded_at").
-		ToSql()
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := tx.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
 	defer rows.Close()
 
 	var orders []models.Order
@@ -175,63 +160,42 @@ func (p *Postgres) UpdateOrderStatus(ctx context.Context, number string, status 
 	}
 	defer tx.Rollback(ctx)
 
-	selectSQL, args, err := p.sb.
-		Select("user_id").
-		From("orders").
-		Where(squirrel.Eq{"number": number}).
-		Suffix("FOR UPDATE").
-		ToSql()
-	if err != nil {
-		return err
-	}
-
+	// Получаем user_id заказа
 	var userID int
-	err = tx.QueryRow(ctx, selectSQL, args...).Scan(&userID)
+	err = tx.QueryRow(ctx, `SELECT user_id FROM orders WHERE number=$1 FOR UPDATE`, number).Scan(&userID)
 	if err != nil {
 		return err
 	}
 
-	updateOrderSQL, args, err := p.sb.
-		Update("orders").
-		Set("status", status).
-		Set("accrual", accrual).
-		Where(squirrel.Eq{"number": number}).
-		ToSql()
+	// Обновляем заказ
+	_, err = tx.Exec(ctx,
+		`UPDATE orders SET status=$1, accrual=$2 WHERE number=$3`,
+		status, accrual, number,
+	)
 	if err != nil {
 		return err
 	}
 
-	_, err = tx.Exec(ctx, updateOrderSQL, args...)
-	if err != nil {
-		return err
-	}
-
+	// Если заказ PROCESSED — обновляем баланс
 	if status == models.OrderProcessed && accrual > 0 {
-		insertBalanceSQL, args, err := p.sb.
-			Insert("user_balance").
-			Columns("user_id", "current", "withdrawn").
-			Values(userID, 0, 0).
-			Suffix("ON CONFLICT (user_id) DO NOTHING").
-			ToSql()
+		// Создаём строку для пользователя, если ещё нет
+		_, err = tx.Exec(ctx,
+			`INSERT INTO user_balance(user_id, current, withdrawn)
+			 VALUES($1, 0, 0)
+			 ON CONFLICT (user_id) DO NOTHING`,
+			userID,
+		)
 		if err != nil {
 			return err
 		}
 
-		_, err = tx.Exec(ctx, insertBalanceSQL, args...)
-		if err != nil {
-			return err
-		}
-
-		updateBalanceSQL, args, err := p.sb.
-			Update("user_balance").
-			Set("current", squirrel.Expr("current + ?", accrual)).
-			Where(squirrel.Eq{"user_id": userID}).
-			ToSql()
-		if err != nil {
-			return err
-		}
-
-		_, err = tx.Exec(ctx, updateBalanceSQL, args...)
+		// Добавляем accrual к current
+		_, err = tx.Exec(ctx,
+			`UPDATE user_balance
+			 SET current = current + $1
+			 WHERE user_id=$2`,
+			accrual, userID,
+		)
 		if err != nil {
 			return err
 		}
