@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 
+	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -11,6 +12,7 @@ var _ Repository = (*Postgres)(nil)
 // Postgres — реализация Repository для PostgreSQL.
 type Postgres struct {
 	pool *pgxpool.Pool
+	sb   squirrel.StatementBuilderType
 }
 
 // NewPostgres создает новый Postgres и подключается к базе по URI.
@@ -25,7 +27,12 @@ func NewPostgres(uri string) (*Postgres, error) {
 		return nil, err
 	}
 
-	return &Postgres{pool: pool}, nil
+	sb := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
+
+	return &Postgres{
+		pool: pool,
+		sb:   sb,
+	}, nil
 }
 
 // Close закрывает подключение к базе данных.

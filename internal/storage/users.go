@@ -6,6 +6,7 @@ import (
 
 	"gofermart_/internal/models"
 
+	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -14,9 +15,17 @@ import (
 // Если пользователь с таким логином уже существует, возвращает ErrUserExists.
 // При успешном добавлении обновляет поля u.ID и u.CreatedAt.
 func (p *Postgres) CreateUser(ctx context.Context, u *models.User) error {
-	query := `INSERT INTO users(login,password_hash) VALUES($1,$2) RETURNING id,created_at`
-	err := p.pool.QueryRow(ctx, query, u.Login, u.PasswordHash).
-		Scan(&u.ID, &u.CreatedAt)
+	query, args, err := p.sb.
+		Insert("users").
+		Columns("login", "password_hash").
+		Values(u.Login, u.PasswordHash).
+		Suffix("RETURNING id, created_at").
+		ToSql()
+	if err != nil {
+		return err
+	}
+
+	err = p.pool.QueryRow(ctx, query, args...).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unique_violation
@@ -32,9 +41,19 @@ func (p *Postgres) CreateUser(ctx context.Context, u *models.User) error {
 func (p *Postgres) GetUserByLogin(ctx context.Context, login string) (*models.User, error) {
 	u := &models.User{}
 
-	query := `SELECT id,login,password_hash,created_at FROM users WHERE login=$1`
-	err := p.pool.QueryRow(ctx, query, login).
-		Scan(&u.ID, &u.Login, &u.PasswordHash, &u.CreatedAt)
+	query, args, err := p.sb.
+		Select("id", "login", "password_hash", "created_at").
+		From("users").
+		Where(squirrel.Eq{"login": login}).
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	// Выполняем запрос
+	err = p.pool.QueryRow(ctx, query, args...).Scan(
+		&u.ID, &u.Login, &u.PasswordHash, &u.CreatedAt,
+	)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

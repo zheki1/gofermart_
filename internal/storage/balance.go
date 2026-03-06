@@ -5,6 +5,7 @@ import (
 	"errors"
 	"gofermart_/internal/models"
 
+	"github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -16,11 +17,16 @@ func (p *Postgres) Withdraw(ctx context.Context, userID int, order string, sum f
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx, `
-		INSERT INTO withdrawals(user_id, order_number, sum, processed_at)
-		VALUES($1,$2,$3,NOW())
-	`, userID, order, sum)
+	query, args, err := p.sb.
+		Insert("withdrawals").
+		Columns("user_id", "order_number", "sum", "processed_at").
+		Values(userID, order, sum, squirrel.Expr("NOW()")).
+		ToSql()
+	if err != nil {
+		return err
+	}
 
+	_, err = tx.Exec(ctx, query, args)
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
 			return ErrOrderAlreadyWithdrawn
@@ -28,14 +34,18 @@ func (p *Postgres) Withdraw(ctx context.Context, userID int, order string, sum f
 		return err
 	}
 
-	tag, err := tx.Exec(ctx, `
-		UPDATE user_balance
-		SET current = current - $1,
-		    withdrawn = withdrawn + $1
-		WHERE user_id = $2
-		  AND current >= $1
-	`, sum, userID)
+	queryUp, args, err := p.sb.
+		Update("user_balance").
+		Set("current", squirrel.Expr("current - ?", sum)).
+		Set("withdrawn", squirrel.Expr("withdrawn + ?", sum)).
+		Where(squirrel.Eq{"user_id": userID}).
+		Where("current >= ?", sum).
+		ToSql()
+	if err != nil {
+		return err
+	}
 
+	tag, err := tx.Exec(ctx, queryUp, args...)
 	if err != nil {
 		return err
 	}
@@ -51,11 +61,18 @@ func (p *Postgres) GetBalance(ctx context.Context, userID int) (*models.Balance,
 	var current float64
 	var withdrawn float64
 
-	err := p.pool.QueryRow(ctx, `
-		SELECT current, withdrawn
-		FROM user_balance
-		WHERE user_id=$1
-	`, userID).Scan(&current, &withdrawn)
+	query, args, err := p.sb.
+		Select("current", "withdrawn").
+		From("user_balance").
+		Where(squirrel.Eq{"user_id": userID}).
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	err = p.pool.
+		QueryRow(ctx, query, args...).
+		Scan(&current, &withdrawn)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -72,12 +89,17 @@ func (p *Postgres) GetBalance(ctx context.Context, userID int) (*models.Balance,
 }
 
 func (p *Postgres) GetWithdrawals(ctx context.Context, userID int) ([]models.Withdrawal, error) {
-	rows, err := p.pool.Query(ctx, `
-		SELECT order_number, sum, processed_at
-		FROM withdrawals
-		WHERE user_id=$1
-		ORDER BY processed_at DESC
-	`, userID)
+	query, args, err := p.sb.
+		Select("order_number", "sum", "processed_at").
+		From("withdrawals").
+		Where(squirrel.Eq{"user_id": userID}).
+		OrderBy("processed_at DESC").
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := p.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
