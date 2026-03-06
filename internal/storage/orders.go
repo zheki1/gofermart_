@@ -106,7 +106,7 @@ func (p *Postgres) ClaimOrders(ctx context.Context, limit int) ([]models.Order, 
 	}
 	defer tx.Rollback(ctx)
 
-	subQuery := p.sb.
+	subQuery, args, err := p.sb.
 		Select("number").
 		From("orders").
 		Where(
@@ -117,13 +117,17 @@ func (p *Postgres) ClaimOrders(ctx context.Context, limit int) ([]models.Order, 
 		).
 		OrderBy("updated_at").
 		Suffix("FOR UPDATE SKIP LOCKED").
-		Limit(uint64(limit))
+		Limit(uint64(limit)).
+		ToSql()
+	if err != nil {
+		return nil, err
+	}
 
 	query, args, err := p.sb.
 		Update("orders").
 		Set("status", "PROCESSING").
 		Set("updated_at", squirrel.Expr("now()")).
-		Where("number IN (?)", subQuery).
+		Where("number IN (" + subQuery + ")").
 		Suffix("RETURNING number, user_id, status, accrual, uploaded_at").
 		ToSql()
 	if err != nil {
